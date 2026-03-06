@@ -208,9 +208,10 @@ struct SimulationConfig {
   double maxFlightTime = 1.30;
 
   // Nominal selection policy
-  NominalSelectionMode nominalMode = NominalSelectionMode::kWindowBias;
+  // Default to symmetric robustness around v_nominal.
+  NominalSelectionMode nominalMode = NominalSelectionMode::kSpeedBias;
   double targetBias = 0.38;
-  double speedBias = 0.40;
+  double speedBias = 0.50;
 
   // Rendering / diagnostics
   int trajectorySamples = 180;

@@ -387,7 +387,11 @@ void App::DrawSweepPanel() {
     } else {
       std::string err;
       if (model::ExportSweepToCsv(exportCsvPath_, sweepResult_, &err)) {
-        PushLog(std::string("Exported CSV: ") + exportCsvPath_);
+        if (err.empty()) {
+          PushLog(std::string("Exported CSV: ") + exportCsvPath_);
+        } else {
+          PushLog(err);
+        }
       } else {
         PushLog(std::string("CSV export failed: ") + err);
       }
