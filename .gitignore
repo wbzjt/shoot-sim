@@ -38,3 +38,6 @@ install_manifest.txt
 
 imgui.ini
 
+# Temporary sweep export variants (keep canonical ShooterLookup.csv tracked if needed)
+ShooterLookup_*.csv
+ShooterLookup[0-9]*.csv
