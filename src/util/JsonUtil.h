@@ -14,4 +14,9 @@ bool SaveSweepJson(const std::string& path,
                    const SweepResult& sweep,
                    std::string* error);
 
+bool LoadSweepJson(const std::string& path,
+                   SimulationConfig* config,
+                   SweepResult* sweep,
+                   std::string* error);
+
 }  // namespace shootersim::util

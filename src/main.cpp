@@ -39,8 +39,8 @@ int main() {
   ImPlot::CreateContext();
 
   ImGuiIO& io = ImGui::GetIO();
-  io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+  io.IniFilename = nullptr;
 
   ImGui::StyleColorsDark();
 

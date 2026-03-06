@@ -127,9 +127,9 @@ struct SolveResult {
 };
 
 struct SweepRequest {
-  double distanceMin = 1.5;
-  double distanceMax = 6.0;
-  double distanceStep = 0.1;
+  double distanceMin = 1.0;
+  double distanceMax = 6.1;
+  double distanceStep = 0.01;
 };
 
 struct SweepPoint {
@@ -160,8 +160,9 @@ struct SimulationConfig {
   // Physics
   PhysicsMode physicsMode = PhysicsMode::kAnalyticNoDrag;
   double gravity = kDefaultGravity;
-  double releaseHeight = 0.82;
-  double zTarget = 2.05;
+  // dz = zTarget - releaseHeight + kTargetOffsetZ = 1.82 - 0.66 + 0 = 1.16 m
+  double releaseHeight = 0.66;
+  double zTarget = 1.82;
 
   // Optional quadratic drag acceleration: a_drag = -k * |v| * v
   double dragCoefficient = 0.0;
@@ -176,21 +177,25 @@ struct SimulationConfig {
   double xBackOffset = 0.15;
 
   // Mode B: centered opening around distance d
-  double openingDepth = 0.30;
+  // Hub top hex opening diameter: 41.7 in ~= 1.06 m
+  double openingDepth = 1.06;
 
   // Effective window shrink
-  double ballRadius = 0.09;
-  double frontMargin = 0.01;
-  double backMargin = 0.03;
+  // Fuel diameter: 0.15 m
+  double ballRadius = 0.075;
+  double frontMargin = 0.0;
+  double backMargin = 0.0;
 
   // Search space (SI internal angles in rad)
-  double thetaMinRad = 0.35;
-  double thetaMaxRad = 1.15;
-  double vMin = 5.0;
-  double vMax = 14.0;
-  double zCeilingMax = 4.5;
+  // Pitch range: 44.57 deg ~ 70.53 deg
+  double thetaMinRad = 0.777893247613873;
+  double thetaMaxRad = 1.2309807214316;
+  // Flywheel speed range: 0 ~ 20 m/s
+  double vMin = 0.0;
+  double vMax = 20.0;
+  double zCeilingMax = 3.3;
 
-  double thetaStepRad = 0.00349;  // ~0.2 deg
+  double thetaStepRad = 0.00017453292519943296;  // 0.01 deg
   double vStep = 0.05;
 
   bool enableMonotonicBoundarySearch = false;

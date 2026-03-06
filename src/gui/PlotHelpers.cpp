@@ -30,6 +30,7 @@ void BuildXZVectors(const std::vector<shootersim::TrajectorySample>& trajectory,
 void PlotTrajectory(const shootersim::SimulationConfig& config,
                     const shootersim::SolveResult& result) {
   if (!result.hasSolution) {
+    ImGui::TextWrapped("No feasible trajectory under current constraints.");
     return;
   }
 
@@ -50,8 +51,16 @@ void PlotTrajectory(const shootersim::SimulationConfig& config,
   BuildXZVectors(trajLow, &xLow, &zLow);
   BuildXZVectors(trajHigh, &xHigh, &zHigh);
 
-  if (ImPlot::BeginPlot("Trajectory")) {
+  const ImVec2 plotSize = ImGui::GetContentRegionAvail();
+  if (ImPlot::BeginPlot("Trajectory", plotSize)) {
     ImPlot::SetupAxes("x (m)", "z (m)");
+    ImPlot::SetupAxisLimits(ImAxis_X1, 0.0,
+                            std::max(result.rawWindow.xBack * 1.15, 1.0),
+                            ImGuiCond_Always);
+    ImPlot::SetupAxisLimits(
+        ImAxis_Y1, 0.0,
+        std::max({config.zCeilingMax, result.nominalApex.zApex, config.zTarget}) * 1.05,
+        ImGuiCond_Always);
 
     ImPlot::PlotLine("v_low", xLow.data(), zLow.data(), static_cast<int>(xLow.size()));
     ImPlot::PlotLine("v_nominal", xNominal.data(), zNominal.data(),
@@ -98,6 +107,7 @@ void PlotThetaVHeatmap(const shootersim::SolveResult& result) {
   const int rows = static_cast<int>(result.thetaSamplesRad.size());
   const int cols = static_cast<int>(result.velocitySamples.size());
   if (rows <= 0 || cols <= 0 || static_cast<int>(result.validityGrid.size()) != rows * cols) {
+    ImGui::TextWrapped("No theta-v validity data yet. Solve a distance first.");
     return;
   }
 
@@ -112,7 +122,7 @@ void PlotThetaVHeatmap(const shootersim::SolveResult& result) {
   const double yMin = util::RadToDeg(result.thetaSamplesRad.front());
   const double yMax = util::RadToDeg(result.thetaSamplesRad.back());
 
-  if (ImPlot::BeginPlot("Theta-V Validity Heatmap")) {
+  if (ImPlot::BeginPlot("Theta-V Validity Heatmap", ImVec2(-1.0f, 240.0f))) {
     ImPlot::SetupAxes("v (m/s)", "theta (deg)");
     ImPlot::PlotHeatmap("validity", values.data(), rows, cols, 0.0, 1.0, "%.0f",
                         ImPlotPoint(xMin, yMin), ImPlotPoint(xMax, yMax));
@@ -122,6 +132,7 @@ void PlotThetaVHeatmap(const shootersim::SolveResult& result) {
 
 void PlotSweepCurves(const shootersim::SweepResult& result) {
   if (result.points.empty()) {
+    ImGui::TextWrapped("Run a distance sweep to generate lookup curves.");
     return;
   }
 
@@ -147,19 +158,19 @@ void PlotSweepCurves(const shootersim::SweepResult& result) {
     }
   }
 
-  if (ImPlot::BeginPlot("distance -> bestTheta")) {
+  if (ImPlot::BeginPlot("distance -> bestTheta", ImVec2(-1.0f, 150.0f))) {
     ImPlot::SetupAxes("distance (m)", "theta (deg)");
     ImPlot::PlotLine("theta", d.data(), thetaDeg.data(), static_cast<int>(d.size()));
     ImPlot::EndPlot();
   }
 
-  if (ImPlot::BeginPlot("distance -> bestVNominal")) {
+  if (ImPlot::BeginPlot("distance -> bestVNominal", ImVec2(-1.0f, 150.0f))) {
     ImPlot::SetupAxes("distance (m)", "v (m/s)");
     ImPlot::PlotLine("v_nominal", d.data(), vNominal.data(), static_cast<int>(d.size()));
     ImPlot::EndPlot();
   }
 
-  if (ImPlot::BeginPlot("distance -> bestDeltaV")) {
+  if (ImPlot::BeginPlot("distance -> bestDeltaV", ImVec2(-1.0f, 150.0f))) {
     ImPlot::SetupAxes("distance (m)", "delta v (m/s)");
     ImPlot::PlotLine("delta_v", d.data(), deltaV.data(), static_cast<int>(d.size()));
     ImPlot::EndPlot();

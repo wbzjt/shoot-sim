@@ -198,4 +198,73 @@ bool SaveSweepJson(const std::string& path,
   return true;
 }
 
+bool LoadSweepJson(const std::string& path,
+                   SimulationConfig* config,
+                   SweepResult* sweep,
+                   std::string* error) {
+  std::ifstream file(path, std::ios::in);
+  if (!file.is_open()) {
+    if (error != nullptr) {
+      *error = "Failed to open sweep path: " + path;
+    }
+    return false;
+  }
+
+  try {
+    json j;
+    file >> j;
+
+    if (config != nullptr) {
+      const auto itCfg = j.find("config");
+      if (itCfg == j.end() || !itCfg->is_object() || !ParseConfigJson(*itCfg, config)) {
+        if (error != nullptr) {
+          *error = "Sweep JSON missing or invalid config field";
+        }
+        return false;
+      }
+    }
+
+    if (sweep != nullptr) {
+      sweep->request.distanceMin = j.value("request", json::object()).value("distanceMin", 0.0);
+      sweep->request.distanceMax = j.value("request", json::object()).value("distanceMax", 0.0);
+      sweep->request.distanceStep = j.value("request", json::object()).value("distanceStep", 0.0);
+      sweep->fromCache = j.value("fromCache", false);
+      sweep->totalTimeMs = j.value("totalTimeMs", 0.0);
+      sweep->points.clear();
+
+      const auto itPoints = j.find("points");
+      if (itPoints == j.end() || !itPoints->is_array()) {
+        if (error != nullptr) {
+          *error = "Sweep JSON missing points array";
+        }
+        return false;
+      }
+
+      sweep->points.reserve(itPoints->size());
+      for (const auto& item : *itPoints) {
+        SweepPoint p;
+        p.distance = item.value("distance", 0.0);
+        p.hasSolution = item.value("hasSolution", false);
+        p.bestThetaRad = item.value("bestThetaRad", 0.0);
+        p.bestVNominal = item.value("bestVNominal", 0.0);
+        p.bestVLow = item.value("bestVLow", 0.0);
+        p.bestVHigh = item.value("bestVHigh", 0.0);
+        p.bestDeltaV = item.value("bestDeltaV", 0.0);
+        p.timeOfFlight = item.value("timeOfFlight", 0.0);
+        p.entryAngleRad = item.value("entryAngleRad", 0.0);
+        p.zApex = item.value("zApex", 0.0);
+        p.failureReason = item.value("failureReason", std::string{});
+        sweep->points.push_back(p);
+      }
+    }
+  } catch (const std::exception& ex) {
+    if (error != nullptr) {
+      *error = ex.what();
+    }
+    return false;
+  }
+
+  return true;
+}
+
 }  // namespace shootersim::util

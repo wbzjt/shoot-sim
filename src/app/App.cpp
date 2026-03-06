@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <sstream>
 
 #include <imgui.h>
@@ -20,6 +21,56 @@
 #include "util/MathUtil.h"
 
 namespace shootersim::app {
+namespace {
+
+struct PanelLayout {
+  ImVec2 pos;
+  ImVec2 size;
+};
+
+bool DragDoubleCompat(const char* label,
+                      double* value,
+                      float speed,
+                      double minValue,
+                      double maxValue,
+                      const char* format) {
+  float v = static_cast<float>(*value);
+  const bool changed =
+      ImGui::DragFloat(label, &v, speed, static_cast<float>(minValue),
+                       static_cast<float>(maxValue), format);
+  if (changed) {
+    *value = static_cast<double>(v);
+  }
+  return changed;
+}
+
+bool SliderDoubleCompat(const char* label,
+                        double* value,
+                        double minValue,
+                        double maxValue,
+                        const char* format) {
+  float v = static_cast<float>(*value);
+  const bool changed = ImGui::SliderFloat(label, &v, static_cast<float>(minValue),
+                                          static_cast<float>(maxValue), format);
+  if (changed) {
+    *value = static_cast<double>(v);
+  }
+  return changed;
+}
+
+void ApplyPanelLayout(const PanelLayout& layout) {
+  ImGui::SetNextWindowPos(layout.pos, ImGuiCond_Always);
+  ImGui::SetNextWindowSize(layout.size, ImGuiCond_Always);
+}
+
+PanelLayout MakePanel(float x, float y, float w, float h) {
+  PanelLayout out;
+  out.pos = ImVec2(x, y);
+  out.size = ImVec2(std::max(120.0f, w), std::max(100.0f, h));
+  return out;
+}
+
+}  // namespace
 
 App::App() {
   std::snprintf(configPath_, sizeof(configPath_), "%s", "ShooterSimConfig.json");
@@ -27,15 +78,34 @@ App::App() {
   std::snprintf(exportJsonPath_, sizeof(exportJsonPath_), "%s", "ShooterLookup.json");
   std::snprintf(exportHeaderPath_, sizeof(exportHeaderPath_), "%s", "GeneratedShooterLookup.h");
 
-  sweepRequest_.distanceMin = 1.5;
-  sweepRequest_.distanceMax = 6.0;
-  sweepRequest_.distanceStep = 0.1;
+  sweepRequest_.distanceMin = 1.0;
+  sweepRequest_.distanceMax = 6.1;
+  sweepRequest_.distanceStep = 0.01;
 
   internalSelfTestPassed_ = RunInternalSelfTest();
   PushLog(internalSelfTestPassed_ ? "Internal math smoke test passed"
                                   : "Internal math smoke test failed");
 
   SolveSingle();
+
+  if (std::filesystem::exists(exportJsonPath_)) {
+    SimulationConfig loadedConfig;
+    SweepResult loadedSweep;
+    std::string err;
+    if (util::LoadSweepJson(exportJsonPath_, &loadedConfig, &loadedSweep, &err)) {
+      const std::string keyCurrent = model::BuildSweepCacheKey(config_, sweepRequest_);
+      const std::string keyLoaded =
+          model::BuildSweepCacheKey(loadedConfig, loadedSweep.request);
+      if (keyCurrent == keyLoaded) {
+        sweepResult_ = loadedSweep;
+        PushLog(std::string("Loaded cached sweep: ") + exportJsonPath_);
+      } else {
+        PushLog(std::string("Cached sweep config mismatch, ignored: ") + exportJsonPath_);
+      }
+    } else {
+      PushLog(std::string("Failed to load cached sweep: ") + err);
+    }
+  }
 }
 
 App::~App() { JoinSweepThread(); }
@@ -43,25 +113,55 @@ App::~App() { JoinSweepThread(); }
 void App::Render() {
   FinalizeSweepIfDone();
 
-  ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
+  const ImGuiViewport* viewport = ImGui::GetMainViewport();
+  const ImVec2 workPos = viewport->WorkPos;
+  const ImVec2 workSize = viewport->WorkSize;
+  const float gap = 10.0f;
+
+  const float leftWidth = 390.0f;
+  const float rightX = workPos.x + leftWidth + gap;
+  const float rightWidth = std::max(320.0f, workSize.x - leftWidth - gap);
+  const float leftHeight = workSize.y;
+
+  const float paramHeight = leftHeight * 0.58f;
+  const float singleHeight = leftHeight * 0.24f;
+  const float statusHeight = leftHeight - paramHeight - singleHeight - gap * 2.0f;
+
+  const float trajHeight = workSize.y * 0.46f;
+  const float heatHeight = workSize.y * 0.30f;
+  const float sweepHeight = workSize.y - trajHeight - heatHeight - gap * 2.0f;
+
+  ApplyPanelLayout(MakePanel(workPos.x, workPos.y, leftWidth, paramHeight));
 
   const bool parameterChanged = DrawParameterPanel();
+
+  ApplyPanelLayout(MakePanel(workPos.x, workPos.y + paramHeight + gap, leftWidth,
+                             singleHeight));
   const bool singleChanged = DrawSingleSolvePanel();
 
   if (autoSolve_ && (parameterChanged || singleChanged || solveDirty_)) {
     SolveSingle();
   }
 
+  ApplyPanelLayout(MakePanel(rightX, workPos.y, rightWidth, trajHeight));
   DrawTrajectoryPanel();
+  ApplyPanelLayout(
+      MakePanel(rightX, workPos.y + trajHeight + gap, rightWidth, heatHeight));
   DrawHeatmapPanel();
+  ApplyPanelLayout(MakePanel(rightX, workPos.y + trajHeight + gap + heatHeight + gap,
+                             rightWidth, sweepHeight));
   DrawSweepPanel();
+  ApplyPanelLayout(MakePanel(workPos.x,
+                             workPos.y + paramHeight + gap + singleHeight + gap,
+                             leftWidth, statusHeight));
   DrawLogPanel();
 }
 
 bool App::DrawParameterPanel() {
   bool changed = false;
 
-  ImGui::Begin("Parameters");
+  ImGui::Begin("Parameters", nullptr,
+               ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
 
   changed |= ImGui::Checkbox("Auto Solve", &autoSolve_);
 
@@ -72,18 +172,20 @@ bool App::DrawParameterPanel() {
     changed = true;
   }
 
-  changed |= ImGui::DragDouble("Gravity (m/s^2)", &config_.gravity, 0.01, 1.0, 30.0, "%.5f");
-  changed |= ImGui::DragDouble("Release Height (m)", &config_.releaseHeight, 0.005, 0.0, 3.0,
-                               "%.3f");
-  changed |= ImGui::DragDouble("Target Height z_target (m)", &config_.zTarget, 0.005, 0.1, 5.0,
-                               "%.3f");
+  changed |=
+      DragDoubleCompat("Gravity (m/s^2)", &config_.gravity, 0.01f, 1.0, 30.0, "%.5f");
+  changed |= DragDoubleCompat("Release Height (m)", &config_.releaseHeight, 0.005f, 0.0,
+                              3.0, "%.3f");
+  changed |= DragDoubleCompat("Target Height z_target (m)", &config_.zTarget, 0.005f,
+                              0.1, 5.0, "%.3f");
 
   if (config_.physicsMode == PhysicsMode::kNumericQuadraticDrag) {
-    changed |= ImGui::DragDouble("Drag Coeff (1/m)", &config_.dragCoefficient, 0.0001, 0.0, 2.0,
-                                 "%.4f");
-    changed |= ImGui::DragDouble("Drag dt (s)", &config_.dragDt, 0.0001, 0.0001, 0.02, "%.4f");
-    changed |=
-        ImGui::DragDouble("Drag max time (s)", &config_.dragMaxTime, 0.01, 0.1, 10.0, "%.2f");
+    changed |= DragDoubleCompat("Drag Coeff (1/m)", &config_.dragCoefficient, 0.0001f,
+                                0.0, 2.0, "%.4f");
+    changed |= DragDoubleCompat("Drag dt (s)", &config_.dragDt, 0.0001f, 0.0001, 0.02,
+                                "%.4f");
+    changed |= DragDoubleCompat("Drag max time (s)", &config_.dragMaxTime, 0.01f, 0.1,
+                                10.0, "%.2f");
   }
 
   ImGui::Separator();
@@ -97,30 +199,32 @@ bool App::DrawParameterPanel() {
   if (config_.windowInputMode == WindowInputMode::kDirectFrontBackOffset) {
     ImGui::TextWrapped(
         "Window = [distance + xFrontOffset, distance + xBackOffset] at z_target.");
-    changed |= ImGui::DragDouble("xFrontOffset (m)", &config_.xFrontOffset, 0.002, -2.0, 2.0,
-                                 "%.3f");
-    changed |=
-        ImGui::DragDouble("xBackOffset (m)", &config_.xBackOffset, 0.002, -2.0, 2.0, "%.3f");
+    changed |= DragDoubleCompat("xFrontOffset (m)", &config_.xFrontOffset, 0.002f, -2.0,
+                                2.0, "%.3f");
+    changed |= DragDoubleCompat("xBackOffset (m)", &config_.xBackOffset, 0.002f, -2.0,
+                                2.0, "%.3f");
   } else {
     ImGui::TextWrapped("Window centered on distance with openingDepth.");
-    changed |= ImGui::DragDouble("Opening Depth (m)", &config_.openingDepth, 0.002, 0.01, 2.0,
-                                 "%.3f");
+    changed |= DragDoubleCompat("Opening Depth (m)", &config_.openingDepth, 0.002f, 0.01,
+                                2.0, "%.3f");
   }
 
-  changed |= ImGui::DragDouble("Ball Radius (m)", &config_.ballRadius, 0.001, 0.0, 0.4, "%.3f");
-  changed |=
-      ImGui::DragDouble("Front Margin (m)", &config_.frontMargin, 0.001, 0.0, 0.3, "%.3f");
-  changed |= ImGui::DragDouble("Back Margin (m)", &config_.backMargin, 0.001, 0.0, 0.3, "%.3f");
+  changed |= DragDoubleCompat("Ball Radius (m)", &config_.ballRadius, 0.001f, 0.0, 0.4,
+                              "%.3f");
+  changed |= DragDoubleCompat("Front Margin (m)", &config_.frontMargin, 0.001f, 0.0, 0.3,
+                              "%.3f");
+  changed |= DragDoubleCompat("Back Margin (m)", &config_.backMargin, 0.001f, 0.0, 0.3,
+                              "%.3f");
 
   ImGui::Separator();
   changed |= gui::DragAngleDeg("Theta Min", &config_.thetaMinRad, 0.1, 0.0, 89.0);
   changed |= gui::DragAngleDeg("Theta Max", &config_.thetaMaxRad, 0.1, 0.0, 89.0);
-  changed |= ImGui::DragDouble("v Min (m/s)", &config_.vMin, 0.01, 0.1, 60.0, "%.3f");
-  changed |= ImGui::DragDouble("v Max (m/s)", &config_.vMax, 0.01, 0.1, 60.0, "%.3f");
-  changed |= ImGui::DragDouble("z Ceiling Max (m)", &config_.zCeilingMax, 0.01, 0.1, 20.0,
-                               "%.3f");
+  changed |= DragDoubleCompat("v Min (m/s)", &config_.vMin, 0.01f, 0.0, 60.0, "%.3f");
+  changed |= DragDoubleCompat("v Max (m/s)", &config_.vMax, 0.01f, 0.0, 60.0, "%.3f");
+  changed |= DragDoubleCompat("z Ceiling Max (m)", &config_.zCeilingMax, 0.01f, 0.1,
+                              20.0, "%.3f");
   changed |= gui::DragAngleDeg("Theta Step", &config_.thetaStepRad, 0.02, 0.01, 5.0);
-  changed |= ImGui::DragDouble("v Step (m/s)", &config_.vStep, 0.005, 0.005, 1.0, "%.3f");
+  changed |= DragDoubleCompat("v Step (m/s)", &config_.vStep, 0.005f, 0.005, 1.0, "%.3f");
 
   changed |= ImGui::Checkbox("Enable monotonic boundary search", &config_.enableMonotonicBoundarySearch);
 
@@ -132,8 +236,8 @@ bool App::DrawParameterPanel() {
 
   changed |= ImGui::Checkbox("Enable flight-time constraint", &config_.enableFlightTimeConstraint);
   if (config_.enableFlightTimeConstraint) {
-    changed |=
-        ImGui::DragDouble("Max flight time (s)", &config_.maxFlightTime, 0.01, 0.01, 10.0, "%.3f");
+    changed |= DragDoubleCompat("Max flight time (s)", &config_.maxFlightTime, 0.01f,
+                                0.01, 10.0, "%.3f");
   }
 
   ImGui::Separator();
@@ -143,8 +247,8 @@ bool App::DrawParameterPanel() {
     config_.nominalMode = static_cast<NominalSelectionMode>(nominalMode);
     changed = true;
   }
-  changed |= ImGui::SliderDouble("targetBias", &config_.targetBias, 0.0, 1.0, "%.3f");
-  changed |= ImGui::SliderDouble("speedBias", &config_.speedBias, 0.0, 1.0, "%.3f");
+  changed |= SliderDoubleCompat("targetBias", &config_.targetBias, 0.0, 1.0, "%.3f");
+  changed |= SliderDoubleCompat("speedBias", &config_.speedBias, 0.0, 1.0, "%.3f");
 
   ImGui::Separator();
   changed |= ImGui::DragInt("Trajectory Samples", &config_.trajectorySamples, 1.0f, 20, 1000);
@@ -196,9 +300,10 @@ bool App::DrawParameterPanel() {
 bool App::DrawSingleSolvePanel() {
   bool changed = false;
 
-  ImGui::Begin("Single Solve");
+  ImGui::Begin("Single Solve", nullptr,
+               ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
 
-  changed |= ImGui::DragDouble("Distance (m)", &singleDistance_, 0.005, 0.1, 20.0, "%.3f");
+  changed |= DragDoubleCompat("Distance (m)", &singleDistance_, 0.005f, 0.1, 20.0, "%.3f");
 
   if (ImGui::Button("Solve")) {
     SolveSingle();
@@ -226,13 +331,15 @@ bool App::DrawSingleSolvePanel() {
 }
 
 void App::DrawTrajectoryPanel() const {
-  ImGui::Begin("Trajectory");
+  ImGui::Begin("Trajectory", nullptr,
+               ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
   gui::PlotTrajectory(config_, singleResult_);
   ImGui::End();
 }
 
 void App::DrawHeatmapPanel() const {
-  ImGui::Begin("Heatmap & Curves");
+  ImGui::Begin("Heatmap & Curves", nullptr,
+               ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
   gui::PlotThetaVHeatmap(singleResult_);
   ImGui::Separator();
   gui::PlotSweepCurves(sweepResult_);
@@ -240,11 +347,13 @@ void App::DrawHeatmapPanel() const {
 }
 
 void App::DrawSweepPanel() {
-  ImGui::Begin("Sweep");
+  ImGui::Begin("Sweep", nullptr,
+               ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
 
-  ImGui::DragDouble("distance_min", &sweepRequest_.distanceMin, 0.01, 0.1, 20.0, "%.3f");
-  ImGui::DragDouble("distance_max", &sweepRequest_.distanceMax, 0.01, 0.1, 20.0, "%.3f");
-  ImGui::DragDouble("distance_step", &sweepRequest_.distanceStep, 0.005, 0.005, 2.0, "%.3f");
+  DragDoubleCompat("distance_min", &sweepRequest_.distanceMin, 0.01f, 0.1, 20.0, "%.3f");
+  DragDoubleCompat("distance_max", &sweepRequest_.distanceMax, 0.01f, 0.1, 20.0, "%.3f");
+  DragDoubleCompat("distance_step", &sweepRequest_.distanceStep, 0.005f, 0.005, 2.0,
+                   "%.3f");
 
   if (sweepRequest_.distanceMin > sweepRequest_.distanceMax) {
     std::swap(sweepRequest_.distanceMin, sweepRequest_.distanceMax);
@@ -270,41 +379,59 @@ void App::DrawSweepPanel() {
   }
 
   ImGui::Separator();
-  ImGui::InputText("Export CSV", exportCsvPath_, sizeof(exportCsvPath_));
-  if (ImGui::Button("Export CSV")) {
-    std::string err;
-    if (model::ExportSweepToCsv(exportCsvPath_, sweepResult_, &err)) {
-      PushLog(std::string("Exported CSV: ") + exportCsvPath_);
+  ImGui::TextUnformatted("CSV Export");
+  ImGui::InputText("Path##csv_path", exportCsvPath_, sizeof(exportCsvPath_));
+  if (ImGui::Button("Export CSV##csv_btn")) {
+    if (sweepResult_.points.empty()) {
+      PushLog("CSV export skipped: no sweep result. Run Sweep first.");
     } else {
-      PushLog(std::string("CSV export failed: ") + err);
+      std::string err;
+      if (model::ExportSweepToCsv(exportCsvPath_, sweepResult_, &err)) {
+        PushLog(std::string("Exported CSV: ") + exportCsvPath_);
+      } else {
+        PushLog(std::string("CSV export failed: ") + err);
+      }
     }
   }
 
-  ImGui::InputText("Export JSON", exportJsonPath_, sizeof(exportJsonPath_));
-  if (ImGui::Button("Export JSON")) {
-    std::string err;
-    if (model::ExportSweepToJson(exportJsonPath_, config_, sweepResult_, &err)) {
-      PushLog(std::string("Exported JSON: ") + exportJsonPath_);
+  ImGui::TextUnformatted("JSON Export");
+  ImGui::InputText("Path##json_path", exportJsonPath_, sizeof(exportJsonPath_));
+  if (ImGui::Button("Export JSON##json_btn")) {
+    if (sweepResult_.points.empty()) {
+      PushLog("JSON export skipped: no sweep result. Run Sweep first.");
     } else {
-      PushLog(std::string("JSON export failed: ") + err);
+      std::string err;
+      if (model::ExportSweepToJson(exportJsonPath_, config_, sweepResult_, &err)) {
+        PushLog(std::string("Exported JSON: ") + exportJsonPath_);
+      } else {
+        PushLog(std::string("JSON export failed: ") + err);
+      }
     }
   }
 
-  ImGui::InputText("Export Header", exportHeaderPath_, sizeof(exportHeaderPath_));
-  if (ImGui::Button("Export C++ Header")) {
-    std::string err;
-    if (model::ExportSweepToCppHeader(exportHeaderPath_, sweepResult_, &err)) {
-      PushLog(std::string("Exported Header: ") + exportHeaderPath_);
+  ImGui::TextUnformatted("Header Export");
+  ImGui::InputText("Path##header_path", exportHeaderPath_, sizeof(exportHeaderPath_));
+  if (ImGui::Button("Export C++ Header##header_btn")) {
+    if (sweepResult_.points.empty()) {
+      PushLog("Header export skipped: no sweep result. Run Sweep first.");
     } else {
-      PushLog(std::string("Header export failed: ") + err);
+      std::string err;
+      if (model::ExportSweepToCppHeader(exportHeaderPath_, sweepResult_, &err)) {
+        PushLog(std::string("Exported Header: ") + exportHeaderPath_);
+      } else {
+        PushLog(std::string("Header export failed: ") + err);
+      }
     }
   }
+
+  ImGui::TextWrapped("Tip: use absolute paths if you are unsure about working directory.");
 
   ImGui::End();
 }
 
 void App::DrawLogPanel() const {
-  ImGui::Begin("Status");
+  ImGui::Begin("Status", nullptr,
+               ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
   ImGui::Text("Internal tests: %s", internalSelfTestPassed_ ? "PASS" : "FAIL");
   ImGui::Text("Single solve time: %.3f ms", singleResult_.solveTimeMs);
   if (!sweepResult_.points.empty()) {

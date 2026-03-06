@@ -1,27 +1,55 @@
-﻿# ShooterSim (FRC 2026 Fuel Shooter Desktop Simulator)
+# ShooterSim (FRC 2D Shooter Solver)
 
-ShooterSim 是一个独立于 robot 主程序的 C++20 桌面工具，用于在第一阶段快速验证 2D 射击数学模型、约束判定与最优解搜索。
+ShooterSim 是一个用于 FRC 射击系统前期建模与求解验证的桌面工具。  
+它把“弹道模型 + 约束判断 + 最优化搜索 + 可视化 + 导出”放在同一个 C++20 项目里，方便在 robot code 之外快速迭代。
 
-## 功能概览
+## 背景与目标
 
-- 2D 几何模型（release point + target opening）
-- 无阻力解析抛体完整实现（并预留数值 drag 模式）
-- 约束判定（机械角度、速度、ceiling、下降段交点、有效窗口、可选入射角/飞行时间）
-- 最优解搜索目标：最大速度容忍区间 `delta_v = v_high - v_low`
-- nominal 策略：
-  - 模式 A：按窗口位置偏置（targetBias）
-  - 模式 B：按速度区间偏置（speedBias）
-- 单距离求解 + 批量距离 sweep
-- GUI：参数调节、轨迹图、theta-v 热力图、distance 曲线、状态日志
-- 导出：CSV / JSON / C++ constexpr Header
-- 配置 JSON 保存/加载
-- sweep 结果缓存（参数不变直接命中缓存）
-- 轻量测试（ballistics / constraints / search）
+在射击机构开发中，先用桌面仿真把数学逻辑跑通，通常比直接上车调参更快、更可控。  
+这个项目的目标是：
 
-## 单位约定
+- 验证 2D 弹道和几何模型是否正确
+- 在约束下搜索每个距离的最优 `pitch + velocity`
+- 以“速度容忍区间最大（deltaV 最大）”作为核心优化目标
+- 生成可移植到机器人代码的 lookup 数据
 
-- 内部统一 SI：`m`, `s`, `rad`, `m/s`
-- GUI 角度输入显示为 degree，内部转换到 rad
+当前版本优先实现解析无阻力模型，并预留二次阻力数值模型接口。
+
+## 主要功能
+
+- 2D 几何模型：release point、目标窗口、有效窗口收缩
+- 两种目标窗口输入方式：
+- `centerDistance + openingDepth`
+- `xFront/xBack` 偏移模式
+- 弹道求解：
+- `Analytic No Drag`（解析）
+- `Numeric Quadratic Drag`（数值积分）
+- 完整约束判断：
+- pitch/速度范围
+- 天花板高度
+- 必须有下降段交点
+- 必须命中有效窗口
+- 可选入射角/飞行时间约束
+- 单点最优化（Single Solve）
+- 区间批量求解（Sweep）
+- 结果导出：CSV / JSON / C++ header
+- 基础单元测试（ballistics / constraints / search）
+
+## 当前默认常量
+
+按当前代码默认值（已更新）：
+
+- Pitch 范围：`44.57 deg ~ 70.53 deg`
+- 飞轮理论速度范围：`0 ~ 20 m/s`
+- 高度：`releaseHeight = 0.66 m`, `zTarget = 1.82 m`
+- `dz = zTarget - releaseHeight + kTargetOffsetZ = 1.16 m`（默认 `kTargetOffsetZ = 0`）
+- 距离 sweep 默认范围：`1.0 ~ 6.1 m`
+- 距离 sweep 默认步长：`0.01 m`
+- pitch 搜索默认步长：`0.01 deg`
+- 天花板约束默认值：`zCeilingMax = 3.3 m`
+- HUB 顶部开口直径（2D 简化 openingDepth）：`1.06 m`
+- FUEL 直径：`0.15 m`（球半径 `0.075 m`）
+- 默认窗口边距：`frontMargin = 0`, `backMargin = 0`
 
 ## 工程结构
 
@@ -57,67 +85,164 @@ ShooterSim/
     test_search.cpp
 ```
 
-## 构建
+## 命令行编译与运行（Windows CMD）
 
-> 需要 CMake 3.22+、C++20 编译器、Git（FetchContent 拉取依赖）
+在项目根目录执行：
 
-```powershell
-cmake -S . -B build -DSHOOTERSIM_BUILD_GUI=ON -DSHOOTERSIM_BUILD_TESTS=ON
+```cmd
+cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DSHOOTERSIM_BUILD_GUI=ON -DSHOOTERSIM_BUILD_TESTS=ON
 cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+build\Release\ShooterSim.exe
 ```
 
-依赖由 FetchContent 自动拉取：
+如果你用 VS2022：
 
-- GLFW
-- Dear ImGui
-- ImPlot
-- nlohmann/json
-
-## 运行
-
-GUI：
-
-```powershell
-.\build\Release\ShooterSim.exe
+```cmd
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DSHOOTERSIM_BUILD_GUI=ON -DSHOOTERSIM_BUILD_TESTS=ON
 ```
 
-测试：
+## GUI 使用说明
 
-```powershell
-.\build\Release\ShooterSimTests.exe
+启动后默认会看到 6 个固定面板：
+
+- `Parameters`
+- `Single Solve`
+- `Trajectory`
+- `Heatmap & Curves`
+- `Sweep`
+- `Status`
+
+`Auto Solve` 默认开启，改参数会自动刷新单点求解和轨迹。
+
+### Single Solve
+
+输入一个 `distance`，立即得到该距离下最优解：
+
+- `bestTheta`
+- `bestVNominal`
+- `bestVLow`, `bestVHigh`
+- `bestDeltaV`
+- 入射点/入射角/apex/失败原因
+
+优化目标是：在约束满足时，最大化 `deltaV = vHigh - vLow`。
+
+### Sweep
+
+设置 `distance_min / distance_max / distance_step` 后执行 `Run Sweep`，得到整段距离曲线。  
+Sweep 本质是对每个距离调用同一套单点搜索器。
+
+### Trajectory
+
+显示 2D 弹道：
+
+- `v_low`
+- `v_nominal`
+- `v_high`
+- raw window / effective window
+- entry point
+- apex
+
+### Heatmap
+
+`theta-v` 可行性热力图，表示在“当前 single distance”下哪些 `(theta, v)` 组合满足所有约束。
+
+### Status
+
+显示运行状态和日志：
+
+- 内部 smoke test 结果
+- 最近求解耗时
+- sweep 耗时
+- 导入/导出/缓存命中信息
+
+## GUI 参数说明（核心）
+
+- `releaseHeight`, `zTarget`  
+定义发射点和目标平面高度。
+- `windowInputMode`  
+窗口输入模式，支持中心+深度或前后偏移。
+- `openingDepth`  
+目标窗口在 x 方向的开口长度（2D 模型）。
+- `ballRadius`  
+球半径，用于有效窗口收缩。
+- `frontMargin`, `backMargin`  
+对有效窗口做额外保守收缩（当前默认都为 0）。
+- `thetaMin/Max`, `vMin/Max`  
+机械/速度约束边界。
+- `zCeilingMax`  
+抛物线最高点约束。
+- `thetaStep`, `vStep`  
+搜索离散精度，越小越精细但耗时越高。
+- `targetBias`, `speedBias`  
+nominal 选取策略偏置参数。
+
+## 导出与缓存
+
+- `Export CSV`：导出 sweep 全距离结果（含 `has_solution` 与诊断字段）
+- `Export JSON`：导出配置+结果，可用于后续自动加载
+- `Export C++ Header`：生成机器人可直接引用的 lookup 表
+
+默认文件名：
+
+- `ShooterLookup.csv`
+- `ShooterLookup.json`
+- `GeneratedShooterLookup.h`
+
+程序启动时会尝试读取项目根目录的 `ShooterLookup.json`。  
+当 JSON 中配置与当前默认参数匹配时，会自动载入 sweep 结果，避免每次重跑。
+
+## 核心接口索引
+
+建议从这些头文件开始阅读：
+
+- 几何：`src/model/Geometry.h`
+- 弹道：`src/model/Ballistics.h`
+- 约束：`src/model/Constraints.h`
+- 单点最优：`src/model/Search.h`
+- 批量 sweep：`src/model/Sweep.h`
+- 导出：`src/model/Export.h`
+- 配置与结果 JSON：`src/util/JsonUtil.h`
+
+关键函数：
+
+- `SolveForDistance(const SimulationConfig&, double distance)`
+- `RunSweep(const SimulationConfig&, const SweepRequest&, ...)`
+- `EvaluateConstraints(...)`
+- `ComputeIntersectionAtHeight(...)`
+- `ComputeApex(...)`
+- `BuildTrajectory(...)`
+
+## 移植到 FRC Robot Code 的建议
+
+建议迁移：
+
+- `src/model/*`
+- `src/util/MathUtil.*`
+
+通常不迁移：
+
+- `src/main.cpp`
+- `src/app/*`
+- `src/gui/*`
+
+实践上推荐流程：
+
+1. 场外用 Sweep 生成 lookup
+2. 导出为 header 或 CSV/JSON
+3. 在 robot code 查表 + 插值
+4. 通过实机标定做误差修正
+
+## 测试
+
+测试命令：
+
+```cmd
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-## GUI 主要区域
+当前测试覆盖：
 
-- `Parameters`：全部物理/几何/搜索/约束参数，支持配置 JSON 保存/加载
-- `Single Solve`：单距离求解，显示最优解、窗口、约束判定和失败原因
-- `Trajectory`：显示 `v_low / v_nominal / v_high` 三条轨迹与窗口
-- `Heatmap & Curves`：theta-v 有效性热力图 + distance 曲线
-- `Sweep`：批量求解、进度、导出
-- `Status`：最近状态、耗时、内部 smoke test 状态
-
-## 导出
-
-- CSV：用于快速分析
-- JSON：用于记录 sweep 与配置快照
-- Header：直接用于机器人代码
-
-生成头文件示例（默认文件名 `GeneratedShooterLookup.h`）：
-
-```cpp
-struct ShooterPoint { double distance; double thetaDeg; double vNominal; double vLow; double vHigh; };
-constexpr std::array<ShooterPoint, N> kShooterLookup = { ... };
-```
-
-## 向 robot code 迁移建议
-
-1. 将 `src/model` 作为纯数学模块迁移到 robot 工程（不带 GUI）。
-2. 保持单位一致（rad、m/s）并在输入层做 degree 转换。
-3. 使用导出的 `GeneratedShooterLookup.h` 做第一版查表。
-4. 第二阶段将理论 `v_nominal` 映射到电机目标速度（RPM）并做实机标定。
-5. 逐步启用 drag 模式或加入实测修正项（偏置/分段拟合）。
-
-## 说明
-
-- 当前重点是 `kAnalyticNoDrag` 完整正确性。
-- `kNumericQuadraticDrag` 为预留/可选模式，便于后续迭代到更高保真模型。
+- 弹道解析正确性
+- 约束判定（含仅接受下降段交点）
+- 搜索结果的有效性与稳定性
