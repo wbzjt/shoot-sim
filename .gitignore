@@ -41,3 +41,9 @@ imgui.ini
 # Temporary sweep export variants (keep canonical ShooterLookup.csv tracked if needed)
 ShooterLookup_*.csv
 ShooterLookup[0-9]*.csv
+
+# Calibration tool generated outputs
+calli/test_out/
+calli/sample_output/
+calibration_output/
+calli/*_output/
